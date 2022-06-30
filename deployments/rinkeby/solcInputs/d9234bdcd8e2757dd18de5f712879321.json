@@ -1,0 +1,39 @@
+{
+	"language": "Solidity",
+	"sources": {
+		"contracts/FundMe.sol": {
+			"content": "// Get funds from users\n// Withdraw funds\n// Set a minimum funding value in USD\n\n//SPDX-License-Identifier: MIT\npragma solidity ^0.8.8;\n\nimport \"./PriceConverter.sol\";\n\nerror NotOwner();\n\ncontract FundMe {\n\tusing PriceConverter for uint256;\n\n\t// constants cannot be modified (like Java) and also do not cost gas; naming convention is all caps (again like Java)\n\t// constants don't take up a storage spot\n\tuint256 public constant MINIMUM_USD = 50 * 1e18;\n\n\taddress[] public funders;\n\tmapping(address => uint256) public addressToAmountFunded;\n\n\t// immutable is similar to constant, but it doesn't require the property to be populate in the same line (ex: can be populated in a constructor or function);\n\t// once it is populated, though, it cannot be changed\n\t// naming convention is i_<name>\n\taddress public immutable i_owner;\n\n\tAggregatorV3Interface public priceFeed;\n\n\tconstructor(address priceFeedAddress) {\n\t\ti_owner = msg.sender;\n\t\tpriceFeed = AggregatorV3Interface(priceFeedAddress);\n\t}\n\n\tfunction fund() public payable {\n\t\t// require can take a second argument that is an error message that is sent in case of failure\n\t\trequire(\n\t\t\tmsg.value.getConversionRate(priceFeed) >= MINIMUM_USD,\n\t\t\t\"Didn't send enough!\"\n\t\t); //1e18 == 1*10 ** 18; msg.value is in wei and 1 ether = 1 * 10^18 wei\n\t\tfunders.push(msg.sender);\n\t\taddressToAmountFunded[msg.sender] = msg.value;\n\t}\n\n\tfunction withdraw() public onlyOwner {\n\t\t// reset the mapping\n\t\tfor (\n\t\t\tuint256 funderIndex = 0;\n\t\t\tfunderIndex < funders.length;\n\t\t\tfunderIndex = funderIndex + 1\n\t\t) {\n\t\t\taddress funder = funders[funderIndex];\n\t\t\taddressToAmountFunded[funder] = 0;\n\t\t}\n\t\t// reset the array to a new address array with (0) elements in it. (1) would mean 1 elements, (2) would mean 2 elements, etc; basically <type>[](0) is an empty array of <type>\n\t\tfunders = new address[](0);\n\t\t// actually withdraw the funds\n\t\t// 3 ways to send funds: transfer, send and call\n\t\t// transfer - we need to cast msg.sender to a payable address; msg.sender is an address, while payable(msg.sender) becomes a payable address through casting\n\t\t// address(this).balance takes the whole balance of the contract; transfer can take any uint256(? I guess) values\n\n\t\t//payable(msg.sender).transfer(address(this).balance));\n\n\t\t// both transfer and send cost 2300 gas; the problem with transfer, though is that it throws an error if the gas limit is exceeded, while send returns a boolean whether it succeeded or not\n\t\t// send - returns a bool with success status and it is adviseable to store it in a bool and follow up with a require for it to be true, so that the transaction is reverted in case of failure\n\n\t\t//bool sendSuccess = payable(msg.sender).send(address(this).balance);\n\t\t//require(sendSuccess, \"Send failed!\");\n\n\t\t// call - allows us to call methods by their name\n\t\t// in the next example, we treat the call as a transaction by leaving the parameters blank and hardcoding the details (val ue)\n\t\t// call returns two values: a bool that stores whether the call was successfull or not and a bytes variable that stores the returned data\n\t\t// in our case, we don't need dataReturned as we aren't calling an actual function\n\t\t// as with send, we should check the success of the call with a require\n\t\t(\n\t\t\tbool callSuccess, /*bytes memory dataReturned*/\n\n\t\t) = payable(msg.sender).call{value: address(this).balance}(\"\");\n\t\trequire(callSuccess, \"Call failed!\");\n\n\t\t// currently, call is the prefered way of withdrawing tokens\n\t}\n\n\t// _; is a placeholder for \"run the rest of the code\"; it can be before or after the require, or inbetween two requires; basically <operations...>; _; <otherOperations...> means that\n\t// the first operations will be executed, then the code in the method, the otherOperations\n\tmodifier onlyOwner() {\n\t\t//require(msg.sender == i_owner, \"Sender is not owner!\");\n\n\t\t// this is similar to the require, but it uses a custom error (NotOwner) so it costs less gas (the string in the require takes up a lot of space)\n\t\t// revert does the same thing as require does in case of failure; it can be used in any cases to revert the transaction\n\t\tif (msg.sender != i_owner) {\n\t\t\trevert NotOwner();\n\t\t}\n\t\t_;\n\t}\n\n\treceive() external payable {\n\t\tfund();\n\t}\n\n\tfallback() external payable {\n\t\tfund();\n\t}\n}\n"
+		},
+		"contracts/PriceConverter.sol": {
+			"content": "//SPDX-License-Identifier: MIT\npragma solidity ^0.8.8;\n\n// npm way of importing; @chainlink/contracts/etc... is actually a path inside a git repository\nimport \"@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol\";\n\n// Libraries are similar to contracts, but you can't declare any state variable and you can't send ether.\n// if a method inside a library has a parameter, when you call it like foo.method(), foo is considered the first parameter;\n// if it has multiple parameters, you need to declare them from 2nd one onward (ex: 1stParam.method(2ndParam, 3rdParam, etc)\nlibrary PriceConverter {\n\tfunction getPrice(AggregatorV3Interface priceFeed)\n\t\tinternal\n\t\tview\n\t\treturns (uint256)\n\t{\n\t\t// ABI\n\t\t// Address 0x8A753747A1Fa494EC906cE90E9f37563A8AF630e\n\t\t(, int256 price, , , ) = priceFeed.latestRoundData();\n\t\treturn uint256(price * 1e10); // price already has 8 extra numbers after it, representing decimals (AggregatorV3Interface.getDecimals() returns this value of 8).\n\t\t// This means we need to add 10 more 0's to match the 18 extra digits required for a WEI (hence why we multiply by 1e10)\n\t}\n\n\tfunction getConversionRate(\n\t\tuint256 ethAmount,\n\t\tAggregatorV3Interface priceFeed\n\t) internal view returns (uint256) {\n\t\tuint256 ethPrice = getPrice(priceFeed);\n\t\tuint256 ethAmountInUsd = (ethPrice * ethAmount) / 1e18;\n\t\treturn ethAmountInUsd;\n\t}\n}\n"
+		},
+		"@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol": {
+			"content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\ninterface AggregatorV3Interface {\n  function decimals() external view returns (uint8);\n\n  function description() external view returns (string memory);\n\n  function version() external view returns (uint256);\n\n  // getRoundData and latestRoundData should both raise \"No data present\"\n  // if they do not have data to report, instead of returning unset values\n  // which could be misinterpreted as actual reported values.\n  function getRoundData(uint80 _roundId)\n    external\n    view\n    returns (\n      uint80 roundId,\n      int256 answer,\n      uint256 startedAt,\n      uint256 updatedAt,\n      uint80 answeredInRound\n    );\n\n  function latestRoundData()\n    external\n    view\n    returns (\n      uint80 roundId,\n      int256 answer,\n      uint256 startedAt,\n      uint256 updatedAt,\n      uint80 answeredInRound\n    );\n}\n"
+		}
+	},
+	"settings": {
+		"optimizer": {
+			"enabled": false,
+			"runs": 200
+		},
+		"outputSelection": {
+			"*": {
+				"*": [
+					"abi",
+					"evm.bytecode",
+					"evm.deployedBytecode",
+					"evm.methodIdentifiers",
+					"metadata",
+					"devdoc",
+					"userdoc",
+					"storageLayout",
+					"evm.gasEstimates"
+				],
+				"": ["ast"]
+			}
+		},
+		"metadata": {
+			"useLiteralContent": true
+		}
+	}
+}
