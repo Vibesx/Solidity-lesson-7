@@ -15,7 +15,7 @@ const { developmentChains } = require("../../helper-hardhat-config");
 			const sendValue = ethers.utils.parseEther("1");
 			beforeEach(async function () {
 				deployer = (await getNamedAccounts()).deployer;
-				// another way to get accounts:
+				// another way to get accounts from hardhat:
 				//const accounts = await ethers.getSigners();
 
 				// deployments.fixture([..tags]) lets us run whole deploy folder with as many tags as we want
